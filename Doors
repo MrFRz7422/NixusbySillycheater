@@ -1,0 +1,591 @@
+-- lang: Luau, file: NIXUS.lua, target: Roblox (any executor)
+-- *black frame, active tab = white bg + black text, inactive stay dark*
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+
+local LP = Players.LocalPlayer
+local Char = LP.Character or LP.CharacterAdded:Wait()
+local Hum = Char:WaitForChild("Humanoid")
+local Root = Char:WaitForChild("HumanoidRootPart")
+
+local State = {
+    WalkSpeed = 16,
+    JumpPower = 50,
+    DoorBypass = false,
+    PlayerESP = false,
+    DoorESP = false,
+    DoorList = {},
+    PlayerList = {},
+}
+
+pcall(function()
+    if CoreGui:FindFirstChild("NIXUS") then CoreGui.NIXUS:Destroy() end
+end)
+
+local function Create(class, props, children)
+    local inst = Instance.new(class)
+    for k,v in pairs(props or {}) do inst[k] = v end
+    for _,c in ipairs(children or {}) do c.Parent = inst end
+    return inst
+end
+
+local Screen = Create("ScreenGui", {
+    Name = "NIXUS",
+    ResetOnSpawn = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    Parent = CoreGui
+})
+
+-- MAIN FRAME (pure black)
+local Main = Create("Frame", {
+    Name = "Main",
+    Size = UDim2.new(0, 520, 0, 380),
+    Position = UDim2.new(0.5, -260, 0.5, -190),
+    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+    BorderSizePixel = 0,
+    Parent = Screen
+}, {
+    Create("UICorner", {CornerRadius = UDim.new(0, 8)}),
+    Create("UIStroke", {Color = Color3.fromRGB(30, 30, 30), Thickness = 1})
+})
+
+-- TITLE BAR
+local TitleBar = Create("Frame", {
+    Size = UDim2.new(1, 0, 0, 36),
+    BackgroundColor3 = Color3.fromRGB(8, 8, 8),
+    BorderSizePixel = 0,
+    Parent = Main
+}, {
+    Create("UICorner", {CornerRadius = UDim.new(0, 8)})
+})
+
+Create("TextLabel", {
+    Size = UDim2.new(1, -80, 1, 0),
+    Position = UDim2.new(0, 12, 0, 0),
+    BackgroundTransparency = 1,
+    Text = "NIXUS",
+    TextColor3 = Color3.fromRGB(255, 255, 255),
+    Font = Enum.Font.GothamBold,
+    TextSize = 16,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Parent = TitleBar
+})
+
+local CloseBtn = Create("TextButton", {
+    Size = UDim2.new(0, 28, 0, 28),
+    Position = UDim2.new(1, -32, 0.5, -14),
+    BackgroundColor3 = Color3.fromRGB(25, 25, 25),
+    Text = "×",
+    TextColor3 = Color3.fromRGB(220, 220, 220),
+    Font = Enum.Font.GothamBold,
+    TextSize = 18,
+    Parent = TitleBar
+}, {
+    Create("UICorner", {CornerRadius = UDim.new(0, 6)})
+})
+CloseBtn.MouseButton1Click:Connect(function() Screen:Destroy() end)
+
+-- DRAG
+local dragging, dragStart, startPos
+TitleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = Main.Position
+    end
+end)
+TitleBar.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- SIDEBAR (black)
+local Side = Create("Frame", {
+    Size = UDim2.new(0, 110, 1, -36),
+    Position = UDim2.new(0, 0, 0, 36),
+    BackgroundColor3 = Color3.fromRGB(5, 5, 5),
+    BorderSizePixel = 0,
+    Parent = Main
+})
+
+local Content = Create("Frame", {
+    Size = UDim2.new(1, -120, 1, -46),
+    Position = UDim2.new(0, 115, 0, 41),
+    BackgroundTransparency = 1,
+    Parent = Main
+})
+
+local Tabs = {}
+local CurrentTab = nil
+
+local function MakeTab(name)
+    local btn = Create("TextButton", {
+        Size = UDim2.new(1, -12, 0, 32),
+        Position = UDim2.new(0, 6, 0, (#Tabs) * 36 + 8),
+        BackgroundColor3 = Color3.fromRGB(18, 18, 18), -- inactive dark
+        Text = name,
+        TextColor3 = Color3.fromRGB(180, 180, 180),
+        Font = Enum.Font.Gotham,
+        TextSize = 13,
+        Parent = Side
+    }, {
+        Create("UICorner", {CornerRadius = UDim.new(0, 6)})
+    })
+
+    local page = Create("ScrollingFrame", {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 3,
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        Visible = false,
+        Parent = Content
+    }, {
+        Create("UIListLayout", {
+            Padding = UDim.new(0, 8),
+            SortOrder = Enum.SortOrder.LayoutOrder
+        })
+    })
+
+    page.UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        page.CanvasSize = UDim2.new(0, 0, 0, page.UIListLayout.AbsoluteContentSize.Y + 12)
+    end)
+
+    btn.MouseButton1Click:Connect(function()
+        if CurrentTab then
+            -- reset previous tab to dark
+            CurrentTab.page.Visible = false
+            CurrentTab.btn.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+            CurrentTab.btn.TextColor3 = Color3.fromRGB(180, 180, 180)
+        end
+        -- active tab → pure white
+        page.Visible = true
+        btn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        btn.TextColor3 = Color3.fromRGB(0, 0, 0)
+        CurrentTab = {btn = btn, page = page}
+    end)
+
+    table.insert(Tabs, {btn = btn, page = page, name = name})
+    if #Tabs == 1 then
+        page.Visible = true
+        btn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        btn.TextColor3 = Color3.fromRGB(0, 0, 0)
+        CurrentTab = {btn = btn, page = page}
+    end
+    return page
+end
+
+local function Groupbox(parent, title)
+    local box = Create("Frame", {
+        Size = UDim2.new(1, -8, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundColor3 = Color3.fromRGB(12, 12, 12),
+        BorderSizePixel = 0,
+        Parent = parent
+    }, {
+        Create("UICorner", {CornerRadius = UDim.new(0, 6)}),
+        Create("UIStroke", {Color = Color3.fromRGB(35, 35, 35), Thickness = 1}),
+        Create("UIListLayout", {
+            Padding = UDim.new(0, 6),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+            HorizontalAlignment = Enum.HorizontalAlignment.Center
+        }),
+        Create("UIPadding", {
+            PaddingTop = UDim.new(0, 28),
+            PaddingBottom = UDim.new(0, 8),
+            PaddingLeft = UDim.new(0, 8),
+            PaddingRight = UDim.new(0, 8)
+        })
+    })
+    Create("TextLabel", {
+        Size = UDim2.new(1, -16, 0, 22),
+        Position = UDim2.new(0, 8, 0, 4),
+        BackgroundTransparency = 1,
+        Text = title,
+        TextColor3 = Color3.fromRGB(160, 160, 160),
+        Font = Enum.Font.GothamBold,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = box
+    })
+    return box
+end
+
+local function Toggle(parent, text, default, callback)
+    local row = Create("Frame", {
+        Size = UDim2.new(1, 0, 0, 26),
+        BackgroundTransparency = 1,
+        Parent = parent
+    })
+    Create("TextLabel", {
+        Size = UDim2.new(1, -50, 1, 0),
+        BackgroundTransparency = 1,
+        Text = text,
+        TextColor3 = Color3.fromRGB(220, 220, 220),
+        Font = Enum.Font.Gotham,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = row
+    })
+    local track = Create("Frame", {
+        Size = UDim2.new(0, 40, 0, 18),
+        Position = UDim2.new(1, -42, 0.5, -9),
+        BackgroundColor3 = default and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(40, 40, 40),
+        Parent = row
+    }, {
+        Create("UICorner", {CornerRadius = UDim.new(1, 0)})
+    })
+    local knob = Create("Frame", {
+        Size = UDim2.new(0, 14, 0, 14),
+        Position = default and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7),
+        BackgroundColor3 = default and Color3.fromRGB(0, 0, 0) or Color3.fromRGB(200, 200, 200),
+        Parent = track
+    }, {
+        Create("UICorner", {CornerRadius = UDim.new(1, 0)})
+    })
+    local on = default
+    local btn = Create("TextButton", {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = "",
+        Parent = row
+    })
+    btn.MouseButton1Click:Connect(function()
+        on = not on
+        track.BackgroundColor3 = on and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(40, 40, 40)
+        knob.BackgroundColor3 = on and Color3.fromRGB(0, 0, 0) or Color3.fromRGB(200, 200, 200)
+        knob.Position = on and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7)
+        if callback then pcall(callback, on) end
+    end)
+    return function() return on end
+end
+
+local function Slider(parent, text, min, max, default, callback)
+    local row = Create("Frame", {
+        Size = UDim2.new(1, 0, 0, 42),
+        BackgroundTransparency = 1,
+        Parent = parent
+    })
+    Create("TextLabel", {
+        Size = UDim2.new(1, 0, 0, 18),
+        BackgroundTransparency = 1,
+        Text = text .. "  [" .. tostring(default) .. "]",
+        TextColor3 = Color3.fromRGB(220, 220, 220),
+        Font = Enum.Font.Gotham,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Name = "Val",
+        Parent = row
+    })
+    local bar = Create("Frame", {
+        Size = UDim2.new(1, 0, 0, 6),
+        Position = UDim2.new(0, 0, 0, 26),
+        BackgroundColor3 = Color3.fromRGB(40, 40, 40),
+        Parent = row
+    }, {
+        Create("UICorner", {CornerRadius = UDim.new(1, 0)})
+    })
+    local fill = Create("Frame", {
+        Size = UDim2.new((default - min) / (max - min), 0, 1, 0),
+        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+        Parent = bar
+    }, {
+        Create("UICorner", {CornerRadius = UDim.new(1, 0)})
+    })
+    local dragging = false
+    bar.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true end
+    end)
+    bar.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+            local rel = math.clamp((i.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+            local val = math.floor(min + (max - min) * rel + 0.5)
+            fill.Size = UDim2.new(rel, 0, 1, 0)
+            row.Val.Text = text .. "  [" .. tostring(val) .. "]"
+            if callback then pcall(callback, val) end
+        end
+    end)
+end
+
+local function Button(parent, text, callback)
+    local b = Create("TextButton", {
+        Size = UDim2.new(1, 0, 0, 28),
+        BackgroundColor3 = Color3.fromRGB(25, 25, 25),
+        Text = text,
+        TextColor3 = Color3.fromRGB(240, 240, 240),
+        Font = Enum.Font.Gotham,
+        TextSize = 13,
+        Parent = parent
+    }, {
+        Create("UICorner", {CornerRadius = UDim.new(0, 5)}),
+        Create("UIStroke", {Color = Color3.fromRGB(50, 50, 50), Thickness = 1})
+    })
+    b.MouseButton1Click:Connect(function()
+        if callback then pcall(callback) end
+    end)
+end
+
+local function Label(parent, text)
+    Create("TextLabel", {
+        Size = UDim2.new(1, 0, 0, 18),
+        BackgroundTransparency = 1,
+        Text = text,
+        TextColor3 = Color3.fromRGB(160, 160, 160),
+        Font = Enum.Font.Gotham,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextWrapped = true,
+        Parent = parent
+    })
+end
+
+-- TABS
+local MainTab = MakeTab("Main")
+local MoveTab = MakeTab("Movement")
+local VisTab = MakeTab("Visuals")
+local SetTab = MakeTab("UI Settings")
+
+-- MAIN
+local g1 = Groupbox(MainTab, "Groupbox")
+Label(g1, "NIXUS ready")
+Label(g1, "doors + players wired")
+Button(g1, "Unlock All Doors", function()
+    State.DoorBypass = true
+    for _, d in ipairs(State.DoorList) do
+        pcall(function()
+            if d:IsA("BasePart") then
+                d.CanCollide = false
+                d.Transparency = 0.6
+            end
+            for _, c in ipairs(d:GetDescendants()) do
+                if c:IsA("BasePart") then
+                    c.CanCollide = false
+                end
+                if c:IsA("ProximityPrompt") then
+                    c.Enabled = true
+                    c.HoldDuration = 0
+                end
+                if c:IsA("ClickDetector") then
+                    c.MaxActivationDistance = 999
+                end
+            end
+        end)
+    end
+end)
+
+-- MOVEMENT
+local g2 = Groupbox(MoveTab, "Movement")
+Slider(g2, "WalkSpeed", 16, 200, 16, function(v)
+    State.WalkSpeed = v
+    if Hum then Hum.WalkSpeed = v end
+end)
+Slider(g2, "JumpPower", 50, 200, 50, function(v)
+    State.JumpPower = v
+    if Hum then
+        Hum.UseJumpPower = true
+        Hum.JumpPower = v
+    end
+end)
+Toggle(g2, "Lock WalkSpeed", false, function(on)
+    if on then
+        task.spawn(function()
+            while on and Hum do
+                Hum.WalkSpeed = State.WalkSpeed
+                task.wait(0.1)
+            end
+        end)
+    end
+end)
+
+-- VISUALS
+local g3 = Groupbox(VisTab, "Players & Doors")
+local playerLabel = Create("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 0),
+    AutomaticSize = Enum.AutomaticSize.Y,
+    BackgroundTransparency = 1,
+    Text = "Players: scanning...",
+    TextColor3 = Color3.fromRGB(180, 200, 255),
+    Font = Enum.Font.Gotham,
+    TextSize = 12,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextWrapped = true,
+    Parent = g3
+})
+local doorLabel = Create("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 0),
+    AutomaticSize = Enum.AutomaticSize.Y,
+    BackgroundTransparency = 1,
+    Text = "Doors: scanning...",
+    TextColor3 = Color3.fromRGB(180, 255, 200),
+    Font = Enum.Font.Gotham,
+    TextSize = 12,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextWrapped = true,
+    Parent = g3
+})
+
+Toggle(g3, "Player ESP", false, function(on)
+    State.PlayerESP = on
+end)
+Toggle(g3, "Door ESP", false, function(on)
+    State.DoorESP = on
+end)
+Button(g3, "Refresh Lists", function()
+    refreshLists()
+end)
+
+-- UI SETTINGS
+local g4 = Groupbox(SetTab, "UI Settings")
+Toggle(g4, "This is a toggle", true, function() end)
+Button(g4, "Button", function() end)
+Button(g4, "Sub Button", function() end)
+Label(g4, "This is a label")
+Label(g4, "which wraps its text")
+Slider(g4, "This is my slider!", 0, 100, 50, function() end)
+
+-- CORE
+local ESPFolder = Create("Folder", {Name = "NIXUS_ESP", Parent = CoreGui})
+
+local function clearESP()
+    for _, c in ipairs(ESPFolder:GetChildren()) do c:Destroy() end
+end
+
+local function makeBillboard(adornee, text, color)
+    local bb = Create("BillboardGui", {
+        Adornee = adornee,
+        Size = UDim2.new(0, 120, 0, 30),
+        StudsOffset = Vector3.new(0, 2.5, 0),
+        AlwaysOnTop = true,
+        Parent = ESPFolder
+    })
+    Create("TextLabel", {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 0.35,
+        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+        Text = text,
+        TextColor3 = color,
+        Font = Enum.Font.GothamBold,
+        TextSize = 12,
+        Parent = bb
+    }, {
+        Create("UICorner", {CornerRadius = UDim.new(0, 4)})
+    })
+    return bb
+end
+
+function refreshLists()
+    State.DoorList = {}
+    State.PlayerList = {}
+    local doorNames = {}
+    local playerNames = {}
+
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        local n = string.lower(obj.Name)
+        if (string.find(n, "door") or string.find(n, "gate") or string.find(n, "entrance"))
+            and (obj:IsA("BasePart") or obj:IsA("Model") or obj:IsA("Folder")) then
+            table.insert(State.DoorList, obj)
+            table.insert(doorNames, obj:GetFullName())
+        end
+    end
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            table.insert(State.PlayerList, plr)
+            table.insert(playerNames, plr.Name)
+        end
+    end
+
+    playerLabel.Text = "Players (" .. #playerNames .. "):\n" .. table.concat(playerNames, "\n")
+    doorLabel.Text = "Doors (" .. #doorNames .. "):\n" .. table.concat(doorNames, "\n")
+end
+
+RunService.RenderStepped:Connect(function()
+    if not State.PlayerESP and not State.DoorESP then
+        clearESP()
+        return
+    end
+    clearESP()
+    if State.PlayerESP then
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LP and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+                makeBillboard(plr.Character.HumanoidRootPart, plr.Name, Color3.fromRGB(100, 180, 255))
+            end
+        end
+    end
+    if State.DoorESP then
+        for _, d in ipairs(State.DoorList) do
+            local part = d:IsA("BasePart") and d or d:FindFirstChildWhichIsA("BasePart", true)
+            if part then
+                makeBillboard(part, d.Name, Color3.fromRGB(100, 255, 140))
+            end
+        end
+    end
+end)
+
+LP.CharacterAdded:Connect(function(c)
+    Char = c
+    Hum = c:WaitForChild("Humanoid")
+    Root = c:WaitForChild("HumanoidRootPart")
+    Hum.WalkSpeed = State.WalkSpeed
+    Hum.UseJumpPower = true
+    Hum.JumpPower = State.JumpPower
+end)
+
+task.spawn(function()
+    while Screen.Parent do
+        if State.DoorBypass then
+            for _, d in ipairs(State.DoorList) do
+                pcall(function()
+                    if d:IsA("BasePart") then
+                        d.CanCollide = false
+                    end
+                    for _, c in ipairs(d:GetDescendants()) do
+                        if c:IsA("BasePart") then c.CanCollide = false end
+                        if c:IsA("ProximityPrompt") then
+                            c.Enabled = true
+                            c.HoldDuration = 0
+                            c.MaxActivationDistance = 30
+                        end
+                    end
+                end)
+            end
+        end
+        task.wait(0.35)
+    end
+end)
+
+local function tryFireDoorRemotes()
+    for _, rem in ipairs(game:GetDescendants()) do
+        if rem:IsA("RemoteEvent") or rem:IsA("RemoteFunction") then
+            local n = string.lower(rem.Name)
+            if string.find(n, "door") or string.find(n, "unlock") or string.find(n, "open") or string.find(n, "gate") then
+                pcall(function()
+                    if rem:IsA("RemoteEvent") then
+                        rem:FireServer()
+                        rem:FireServer(true)
+                        rem:FireServer("Open")
+                    end
+                end)
+            end
+        end
+    end
+end
+
+task.defer(function()
+    task.wait(1)
+    refreshLists()
+    tryFireDoorRemotes()
+end)
+
+print("[NIXUS] loaded — black ui, white active tabs")
